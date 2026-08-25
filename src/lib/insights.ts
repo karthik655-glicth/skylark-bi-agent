@@ -64,7 +64,7 @@ const columnHints: Record<keyof typeof columns, Record<string, { type: "number" 
     nature_of_work: { type: "category", phrases: ["nature", "nature of work"] },
     execution_status: { type: "category", phrases: ["execution status", "delivery status", "status", "completed"] },
     data_delivery_date: { type: "date", phrases: ["data delivery date", "delivery date"] },
-    po_loi_date: { type: "date", phrases: ["po date", "loi date", "po", "loi"] },
+    po_loi_date: { type: "date", phrases: ["po date", "loi date", "purchase order", "po number", "loi date"] },
     document_type: { type: "category", phrases: ["document", "document type"] },
     probable_start_date: { type: "date", phrases: ["start date", "probable start"] },
     probable_end_date: { type: "date", phrases: ["end date", "probable end"] },
@@ -323,7 +323,14 @@ function inferColumn(question: string, board: keyof typeof columns, desired: "nu
   const candidates = Object.entries(columnHints[board]).filter(([, hint]) => desired === "number" ? hint.type === "number" : hint.type !== "number");
   let best: { column: string; score: number } | undefined;
   for (const [column, hint] of candidates) {
-    const score = hint.phrases.reduce((total, phrase) => lower.includes(phrase) ? total + phrase.length : total, 0);
+    let score = 0;
+    for (const phrase of hint.phrases) {
+      if (phrase.length <= 3) {
+        if (new RegExp(`\\b${phrase}\\b`, "i").test(lower)) score += phrase.length * 2;
+      } else if (lower.includes(phrase)) {
+        score += phrase.length;
+      }
+    }
     if (score > (best?.score ?? 0)) best = { column, score };
   }
   return best?.column;
@@ -332,11 +339,16 @@ function inferColumn(question: string, board: keyof typeof columns, desired: "nu
 function completePlanFromQuestion(plan: QueryPlan, question?: string): QueryPlan {
   if (!question) return plan;
   const lower = question.toLowerCase();
-  const board: keyof typeof columns = /work.?order|delivery|billing|collection|receivable|invoice|contract|po|loi/.test(lower) ? "work_orders" : /deal|pipeline|sales|probability|close/.test(lower) ? "deals" : plan.board;
+  const isWorkOrderIntent = /\b(work.?orders?|delivery|deliveries|execution|billing|billed|collections?|collected|receivables?|invoices?|contracts?|po|loi)\b/i.test(lower);
+  const isDealsIntent = /\b(deals?|pipeline|sales|probabilities?|closed?)\b/i.test(lower);
+  const board: keyof typeof columns = plan.board
+    ? (String(plan.board).toLowerCase().includes("work") ? "work_orders" : "deals")
+    : (isWorkOrderIntent ? "work_orders" : isDealsIntent ? "deals" : "deals");
+
   const completed: QueryPlan = { ...plan, board, filters: plan.filters ? [...plan.filters] : [] };
-  const asksForGrouping = /highest|top|largest|biggest|strongest|compare|breakdown|grouped by|\bby\b|most/.test(lower);
-  const asksForCount = /how many|count|number of|most deals|most work orders|handling the most/.test(lower);
-  const asksForAverage = /average|avg|mean/.test(lower);
+  const asksForGrouping = /\b(highest|top|largest|biggest|strongest|compare|breakdown|grouped by|by|most)\b/i.test(lower);
+  const asksForCount = /\b(how many|count|number of|most deals|most work orders|handling the most)\b/i.test(lower);
+  const asksForAverage = /\b(average|avg|mean)\b/i.test(lower);
 
   if (!completed.groupBy && asksForGrouping) completed.groupBy = inferColumn(lower, board, "group");
   if (!completed.groupBys?.length && /versus| vs |compare|with/.test(lower)) {
@@ -385,6 +397,13 @@ export async function executeQueryPlan(plan: QueryPlan, question?: string) {
     measure = board === "deals" ? "deal_value" : "contract_value_excl_gst";
   }
 
+  const map = columns[board];
+  const supportedColumns = new Set([...Object.keys(map ?? {}), ...(board === "work_orders" ? Object.keys(sourceColumns.work_orders) : [])]);
+
+  if (aggregation !== "count" && (!measure || !supportedColumns.has(measure))) {
+    measure = board === "deals" ? "deal_value" : "contract_value_excl_gst";
+  }
+
   const normalizedFilters = Array.isArray(plan.filters)
     ? plan.filters.filter((f) => f && typeof f === "object" && f.column).map((f) => ({
         ...f,
@@ -397,17 +416,15 @@ export async function executeQueryPlan(plan: QueryPlan, question?: string) {
     board,
     aggregation: ["count", "sum", "average"].includes(aggregation) ? aggregation : "sum",
     measure,
-    measures: measures.length ? measures : measure ? [measure] : undefined,
-    groupBy,
-    groupBys: groupBys.length ? groupBys : undefined,
+    measures: measures.length && measures.every((m) => supportedColumns.has(m)) ? measures : measure ? [measure] : undefined,
+    groupBy: groupBy && supportedColumns.has(groupBy) ? groupBy : undefined,
+    groupBys: groupBys.length ? groupBys.filter((g) => supportedColumns.has(g)) : undefined,
     filters: normalizedFilters,
     sort: plan.sort ?? (groupBy ? aggregation === "count" ? "count_desc" : "value_desc" : undefined),
     limit: typeof plan.limit === "number" && plan.limit > 0 ? Math.min(Math.floor(plan.limit), 25) : undefined,
   };
 
-  const map = columns[plan.board];
-  const supportedColumns = new Set([...Object.keys(map ?? {}), ...(plan.board === "work_orders" ? Object.keys(sourceColumns.work_orders) : [])]);
-  if (!map || (plan.measure && !supportedColumns.has(plan.measure))) throw new Error("The requested query uses an unsupported board or column.");
+  if (!map) throw new Error("The requested query uses an unsupported board.");
   const records = await getBoardItems(plan.board === "deals" ? DEALS : WORK_ORDERS);
   const filtered = records.filter((item) => (plan.filters ?? []).every((filter) => {
     if (!supportedColumns.has(filter.column)) return true;
