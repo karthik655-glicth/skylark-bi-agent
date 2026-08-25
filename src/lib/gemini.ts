@@ -14,37 +14,63 @@ export type QueryPlan = {
 };
 
 const dataDictionary = `
-Deals columns: deal_name (text), owner_code (text), client_code (text), deal_status (status), actual_close_date (date), closure_probability (status), deal_value (number), tentative_close_date (date), deal_stage (status), product_deal (text), sector (dropdown), created_date (date).
-Work Orders columns: deal_name (text), customer_code (text), serial_number (text), nature_of_work (dropdown), execution_status (status), data_delivery_date (date), po_loi_date (date), document_type (dropdown), probable_start_date (date), probable_end_date (date), owner_code (text), sector (dropdown), type_of_work (text), contract_value_excl_gst (number), billed_value_excl_gst (number), collected_amount_incl_gst (number), amount_to_bill_excl_gst (number), amount_receivable (number), invoice_status (status), billing_status (status), collection_status (status), last_executed_month (month/category), skylark_platform_in_deliverables (category), last_invoice_date (date), latest_invoice_no (text), amount_incl_gst (number), billed_value_incl_gst (number), amount_to_bill_incl_gst (number), ar_priority_account (category), quantity_by_ops (number), quantities_as_per_po (number), quantity_billed (number), balance_quantity (number), expected_billing_month (month/category), actual_billing_month (month/category), actual_collection_month (month/category), wo_status_billed (status), collection_date (date).
-Allowed operations: count records, sum number columns, average number columns, optionally group by one column, compare multiple grouped category columns with "groupBys", optionally filter by exact value or text contains. Use only listed canonical column names.
+Canonical Boards & Columns for Skylark Drones:
 
-Planning rules:
-- Questions about pipeline/deals/sales use board "deals".
-- Questions about work orders/delivery/billing/collections/receivables/contracts use board "work_orders".
-- "highest", "top", "largest", "strongest", "compare", "breakdown", "grouped by", or "by <category>" require groupBy when the user names a category. Never aggregate into a single total for these questions.
-- "work order value" means measure "contract_value_excl_gst".
-- "billed value" means measure "billed_value_excl_gst".
-- "collected amount" means measure "collected_amount_incl_gst".
-- "pipeline value", "deal value", or deal revenue means measure "deal_value".
-- If the user asks to compare two numeric metrics, put both in "measures".
-- If the user asks to compare two category/date columns, put both in "groupBys" and use aggregation "count".
-- "most deals" or "most work orders" means aggregation "count" grouped by the requested category.
-- "current pipeline" or "open pipeline" means add filter deal_status equals Open.
-- Do not answer the question. Return the query plan only.
+Board 1: "deals" (Sales & Pipeline)
+- deal_name (text): Name/title of the deal or project
+- owner_code (text): Sales representative / deal owner
+- client_code (text): Customer / client code
+- deal_status (status): "Open", "Won", "Lost"
+- actual_close_date (date): Date the deal was officially closed
+- closure_probability (status): Confidence level ("High", "Medium", "Low")
+- deal_value (number): Value of the deal in Indian Rupees (INR) - ONLY numeric measure on deals
+- tentative_close_date (date): Expected/projected closing date
+- deal_stage (status): Pipeline stage (e.g., "Proposal", "Negotiation", "Lead", "Discovery")
+- product_deal (text): Drone or software product offering (e.g., "Spectra", "Drone Mission", "Surveys")
+- sector (dropdown): Industry vertical (e.g., "Mining", "Solar", "Utilities", "Infrastructure", "Agriculture")
+- created_date (date): Date deal was created
 
-Examples:
-Question: Which sectors have the highest work order value?
-Plan: {"board":"work_orders","aggregation":"sum","measure":"contract_value_excl_gst","groupBy":"sector","sort":"value_desc"}
-Question: Compare deal values by product type.
-Plan: {"board":"deals","aggregation":"sum","measure":"deal_value","groupBy":"product_deal","sort":"value_desc"}
-Question: What is the current pipeline value grouped by deal stage?
-Plan: {"board":"deals","aggregation":"sum","measure":"deal_value","groupBy":"deal_stage","filters":[{"column":"deal_status","operator":"equals","value":"Open"}],"sort":"value_desc"}
-Question: Which owners are handling the most work orders?
-Plan: {"board":"work_orders","aggregation":"count","groupBy":"owner_code","sort":"count_desc"}
-Question: What is the total billed value versus collected amount?
-Plan: {"board":"work_orders","aggregation":"sum","measures":["billed_value_excl_gst","collected_amount_incl_gst"]}
-Question: Compare expected billing month with actual billing month.
-Plan: {"board":"work_orders","aggregation":"count","groupBys":["expected_billing_month","actual_billing_month"]}`;
+Board 2: "work_orders" (Operations, Execution, Billing & Collections)
+- deal_name (text): Work order or project name
+- customer_code (text): Customer / client code
+- serial_number (text): Work order serial number
+- nature_of_work (dropdown): Scope of work (e.g., "Recurring", "One-time", "Pilot")
+- execution_status (status): Delivery/Execution status (e.g., "Completed", "In Progress", "Yet to Start", "On Hold")
+- data_delivery_date (date): Date data deliverables were submitted
+- po_loi_date (date): Purchase Order / Letter of Intent date
+- document_type (dropdown): "PO", "LOI", "Work Order", "Contract"
+- probable_start_date (date): Estimated project start date
+- probable_end_date (date): Estimated project completion date
+- owner_code (text): Operations / Project owner managing delivery
+- sector (dropdown): Industry vertical (e.g., "Mining", "Renewables", "Infrastructure")
+- type_of_work (text): Specific drone service / product type
+- contract_value_excl_gst (number): Total contract / work order value (excl. GST)
+- billed_value_excl_gst (number): Total amount invoiced / billed to date (excl. GST)
+- collected_amount_incl_gst (number): Total payments collected / received (incl. GST)
+- amount_to_bill_excl_gst (number): Remaining unbilled amount / to be billed (excl. GST)
+- amount_receivable (number): Outstanding unpaid / receivable amount from customer
+- invoice_status (status): Status of invoice (e.g., "Issued", "Pending", "Paid")
+- billing_status (status): "Billed", "Unbilled", "Partially Billed"
+- collection_status (status): "Collected", "Pending", "Overdue"
+- expected_billing_month (month/category): Projected month for invoicing
+- actual_billing_month (month/category): Actual month invoiced
+- actual_collection_month (month/category): Actual month payment was collected
+- ar_priority_account (category): High-priority Accounts Receivable tag
+- last_executed_month (month/category): Last active operations month
+
+Rules:
+- Deals/Pipeline questions use board "deals".
+- Work Order/Execution/Billing/Receivables/Operations questions use board "work_orders".
+- Questions asking for "highest", "top", "rank", "compare", "breakdown", "by <category>" MUST set "groupBy" to the category column and "sort": "value_desc" or "count_desc".
+- "open pipeline" or "current pipeline" -> filter deal_status equals "Open".
+- "unbilled" or "to bill" -> measure "amount_to_bill_excl_gst".
+- "receivables" or "outstanding" -> measure "amount_receivable".
+- "billed value" -> measure "billed_value_excl_gst".
+- "collected amount" or "collections" -> measure "collected_amount_incl_gst".
+- "work order value" or "contract value" -> measure "contract_value_excl_gst".
+- "deal value" or "pipeline value" -> measure "deal_value".
+- If comparing two metrics (e.g. billed vs collected), set measures to ["billed_value_excl_gst", "collected_amount_incl_gst"].
+- Return ONLY the JSON query plan matching the schema.`;
 
 const queryPlanSchema = {
   type: "object",
@@ -182,7 +208,7 @@ const queryPlanSchema = {
   required: ["board", "aggregation"],
 };
 
-const model = process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite";
+const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 export async function conversationalReply(question: string) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -191,25 +217,26 @@ export async function conversationalReply(question: string) {
   const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
     model,
-    contents: `You are Skylark's friendly business-intelligence assistant. The user said: "${question}".
+    contents: `You are Skylark Drones' executive business-intelligence assistant. The user said: "${question}".
 
-If this is a greeting, greet them briefly and suggest questions about pipeline, sectors, revenue, work-order delivery, billing, or leadership updates. If it is unrelated to business intelligence, politely state that you can analyse Skylark's live Deals and Work Orders data. Keep the response below 60 words.`,
+If this is a greeting, greet them warmly and suggest 3 high-impact questions they can ask about sales pipeline, sector performance, revenue, work-order execution, or leadership briefings. If unrelated to BI, politely explain that you provide live intelligence from Skylark's Deals and Work Orders boards. Keep the response concise and professional.`,
   });
 
   return response.text?.trim() || null;
 }
 
-export async function createQueryPlan(question: string): Promise<QueryPlan | null> {
+export async function createQueryPlan(question: string, history?: string): Promise<QueryPlan | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   const ai = new GoogleGenAI({ apiKey });
+  const contextBlock = history ? `Conversation context:\n${history}\n\n` : "";
   const response = await ai.models.generateContent({
     model,
     config: {
       responseMimeType: "application/json",
       responseSchema: queryPlanSchema,
     },
-    contents: `Convert the user's business question into one safe JSON query plan.\n\n${dataDictionary}\n\nUser question: ${question}`,
+    contents: `Convert the user's business question into one safe JSON query plan.\n\n${dataDictionary}\n\n${contextBlock}Current question: ${question}`,
   });
   try { return JSON.parse(response.text ?? "") as QueryPlan; } catch { return null; }
 }
@@ -220,7 +247,20 @@ export async function businessReply(question: string, facts: BusinessFacts) {
   const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
     model,
-    contents: `You are Skylark's founder-facing business-intelligence assistant. Answer the user's question using ONLY the verified facts below, which were just calculated from monday.com. Do not invent metrics, trends, dates, filters, comparisons, or causes. Do not say the data is for a quarter unless the facts say it is. Use Indian rupee formatting.\n\nReturn plain text only: do not use Markdown syntax, including # headings, ** bold markers, *, backticks, tables, or bullet characters. Use short section titles followed by normal sentences.\n\nUser question: ${question}\n\nVerified facts:\n${JSON.stringify(facts)}\n\nWrite a concise answer with: (1) direct answer, (2) 2-3 useful executive insights, and (3) a data-quality caveat. Mention the source is live monday.com data.`,
+    contents: `You are Skylark Drones' Chief BI Officer presenting directly to executive leadership / founders.
+Synthesize the verified facts below into a high-impact leadership briefing.
+
+Formatting & Style Instructions:
+1. Executive Summary: Start with a crisp 1-2 sentence bottom line with key headline metrics in **bold**.
+2. Structured Breakdown: Use clean Markdown tables to present sector breakdowns, top deal owners, and operational progress (e.g. | Sector | Deals | Pipeline Value |).
+3. Strategic Insights: Provide 2-3 concise bullet points highlighting key business drivers, concentration risks, or operational momentum.
+4. Data Note: ONLY include a caveat/note if there are actually missing values (> 0) reported in the facts. If there are 0 missing records, DO NOT mention any caveats or data quality disclaimers.
+5. Currency: Format all monetary amounts in Indian Rupees (e.g. Rs 12.5 Cr or Rs 45 Lakhs). Never use dollars ($).
+
+User question: ${question}
+
+Verified facts:
+${JSON.stringify(facts)}`,
   });
   return response.text?.trim() || null;
 }
@@ -231,7 +271,20 @@ export async function queryReply(question: string, result: unknown) {
   const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
     model,
-    contents: `Answer the user's business question using ONLY this verified, live monday.com query result. Do not invent data or say a requested column is absent. Use plain text, no Markdown. State the direct result, a brief insight, and the supplied caveat. All money is Indian rupees. Format every amount with Rs or INR only; never use dollars or the $ symbol.\n\nQuestion: ${question}\n\nVerified result: ${JSON.stringify(result)}`,
+    contents: `You are Skylark Drones' Chief BI Officer presenting directly to executive leadership / founders.
+Answer the user's business question using ONLY this verified, live monday.com query result. Do not invent numbers.
+
+Formatting & Style Instructions:
+1. Direct Answer: Start with a clear, direct answer in 1-2 sentences with key figures in **bold**.
+2. Table Breakdown: Whenever multiple items, sectors, owners, stages, or comparisons are present in the results, format them as a clean Markdown table (e.g. | Sector | Records | Total Value | Share (%) |).
+3. Key Takeaways: Provide 2-3 concise bullet points highlighting the main takeaways, top contributors, or business context.
+4. Data Note: ONLY include a data caveat note if the "caveat" field in the verified result is present and non-null. If "caveat" is null or missing records is 0, DO NOT mention any caveats or data quality disclaimers.
+5. Currency: Format all monetary amounts in Indian Rupees with Rs or INR (e.g. Rs 4.5 Cr, Rs 75 Lakhs, Rs 2,50,000). Never use $.
+
+User Question: ${question}
+
+Verified result:
+${JSON.stringify(result)}`,
   });
   return response.text?.trim() || null;
 }

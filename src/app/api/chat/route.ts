@@ -18,14 +18,7 @@ function describeError(error: unknown): string {
 }
 
 function cleanDisplayText(text: string): string {
-  return text
-    .replace(/^\s{0,3}#{1,6}\s*/gm, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/^\s*[-*+]\s+/gm, "• ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*+/g, "")
-    .trim();
+  return text.trim();
 }
 
 export async function POST(request: NextRequest) {
@@ -33,12 +26,13 @@ export async function POST(request: NextRequest) {
   if (!body || typeof body.question !== "string" || !body.question.trim()) return NextResponse.json({ error: "Please enter a business question." }, { status: 400 });
   const question = body.question.trim();
   const history = Array.isArray(body.history) ? body.history.filter((message) => (message.role === "user" || message.role === "assistant") && typeof message.content === "string") as { role: "user" | "assistant"; content: string }[] : [];
-  const needsContext = /\b(same|that|this|it|those|them|above|previous|in rupees|in inr)\b/i.test(question);
-  const contextQuestion = needsContext && history.length > 1
-    ? `${history.slice(0, -1).map((message) => `${message.role}: ${message.content}`).join("\n")}\nuser: ${question}`
-    : question;
+  
+  const historyContext = history.length > 0
+    ? history.slice(-6).map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n")
+    : undefined;
+
   const isGreeting = /^(hi|hello|hey|good morning|good afternoon|good evening)[!. ]*$/i.test(question);
-  const isBusinessQuestion = /pipeline|deal|owner|sector|revenue|sales|work.?order|delivery|execution|billing|billed|collected|collection|receivable|amount|financial|contract|invoice|operational|leadership|executive.?update|forecast|stage|probability|close.?date/i.test(contextQuestion);
+  const isBusinessQuestion = /pipeline|deal|owner|sector|revenue|sales|work.?order|delivery|execution|billing|billed|collected|collection|receivable|amount|financial|contract|invoice|operational|leadership|executive.?update|forecast|stage|probability|close.?date|how|which|what|top|highest|compare|breakdown/i.test(question);
 
   if (isGreeting || !isBusinessQuestion) {
     try {
@@ -47,14 +41,14 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       console.error("Gemini conversational request failed", error);
     }
-    return NextResponse.json({ answer: isGreeting ? "Hello! Ask me about pipeline, sectors, revenue, delivery, or a leadership update." : "I can analyse Skylark's live Deals and Work Orders data. Ask about pipeline, sectors, revenue, delivery, billing, or a leadership update." });
+    return NextResponse.json({ answer: isGreeting ? "Hello! Ask me about pipeline, sector performance, revenue, work-order delivery, or a leadership update." : "I can analyse Skylark's live Deals and Work Orders data. Ask about pipeline, sectors, revenue, delivery, billing, or a leadership update." });
   }
 
-  const isOverviewQuestion = /how is (our |the )?pipeline|pipeline looking|leadership update|executive update|leadership briefing|business update|overview of (our |the )?pipeline|weekly update/i.test(contextQuestion);
+  const isOverviewQuestion = /how is (our |the )?pipeline|pipeline looking|leadership update|executive update|leadership briefing|business update|overview of (our |the )?pipeline|weekly update/i.test(question);
 
   if (isOverviewQuestion) {
     try {
-      const facts = await getBusinessFacts(contextQuestion);
+      const facts = await getBusinessFacts(question);
       const answer = await businessReply(question, facts);
       const fallback = fallbackBusinessAnswer(facts);
       return NextResponse.json({ answer: cleanDisplayText(answer ?? fallback) });
@@ -65,12 +59,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const plan = await createQueryPlan(contextQuestion);
+    const plan = await createQueryPlan(question, historyContext);
     if (!plan) throw new Error("I could not translate that question into a safe data query. Please name the measure or grouping you need.");
-    const result = await executeQueryPlan(plan, contextQuestion);
+    const result = await executeQueryPlan(plan, question);
     const answer = await queryReply(question, result);
-    const totals = result.measureTotals?.length ? ` Totals: ${result.measureTotals.map((row) => `${row.field}: ${row.formattedTotal}`).join("; ")}.` : "";
-    const fallback = `${result.source}: ${result.matchingRecords} matching records.${totals} ${result.results.map((row) => `${row.group}: ${row.value} across ${row.recordCount} records`).join("; ")}. ${result.caveat}`;
+    const totals = result.measureTotals?.length ? `\n\n**Totals:** ${result.measureTotals.map((row) => `${row.field}: ${row.formattedTotal}`).join("; ")}` : "";
+    const caveatLine = result.caveat ? `\n\n_${result.caveat}_` : "";
+    const fallback = `**${result.source}** (${result.matchingRecords} matching records)${totals}\n\n${result.results.map((row) => `• **${row.group}:** ${row.formattedValue || row.value}${row.shareOfTotal ? ` (${row.shareOfTotal})` : ""} across ${row.recordCount} records`).join("\n")}${caveatLine}`;
     return NextResponse.json({ answer: cleanDisplayText(answer ?? fallback) });
   } catch (error) {
     console.error("monday MCP request failed", error);

@@ -168,7 +168,11 @@ export async function getBusinessFacts(question: string): Promise<BusinessFacts>
 
 export function fallbackBusinessAnswer(facts: BusinessFacts): string {
   const owner = facts.topOwners[0];
-  return `Live monday.com analysis\n\nScope: ${facts.scope}. ${facts.pipeline.openDeals} deals have ${money.format(facts.pipeline.recordedValue)} in recorded value. The leading sector is ${facts.pipeline.leadingSector} at ${money.format(facts.pipeline.leadingSectorValue)}.${owner ? ` The leading owner is ${owner.label} with ${owner.count} deals.` : ""}\n\nData quality caveat: ${facts.pipeline.missingValueRecords} records lack a usable value, ${facts.pipeline.missingOwnerRecords} lack an owner, and ${facts.pipeline.missingTentativeCloseDateRecords} lack a tentative close date.`;
+  const missingTotal = facts.pipeline.missingValueRecords + facts.pipeline.missingOwnerRecords + facts.pipeline.missingTentativeCloseDateRecords;
+  const caveatText = missingTotal > 0
+    ? `\n\nData quality note: ${facts.pipeline.missingValueRecords} records lack a usable value, ${facts.pipeline.missingOwnerRecords} lack an owner, and ${facts.pipeline.missingTentativeCloseDateRecords} lack a tentative close date.`
+    : "";
+  return `Live monday.com analysis\n\nScope: ${facts.scope}. ${facts.pipeline.openDeals} deals have ${money.format(facts.pipeline.recordedValue)} in recorded value. The leading sector is ${facts.pipeline.leadingSector} at ${money.format(facts.pipeline.leadingSectorValue)}.${owner ? ` The leading owner is ${owner.label} with ${owner.count} deals.` : ""}${caveatText}`;
 }
 
 function valueFor(item: Record<string, unknown>, board: keyof typeof columns, column: string): string | null {
@@ -446,7 +450,12 @@ export async function executeQueryPlan(plan: QueryPlan, question?: string) {
     if (plan.aggregation !== "count") { if (!raw) bucket.missingMeasure += 1; else bucket.total += amount(raw); }
     groups.set(label, bucket);
   }
-  let results = [...groups.entries()].map(([group, stats]) => ({ group, recordCount: stats.count, value: plan.aggregation === "count" ? stats.count : plan.aggregation === "average" ? (stats.count - stats.missingMeasure ? stats.total / (stats.count - stats.missingMeasure) : 0) : stats.total, missingMeasureRecords: stats.missingMeasure }));
+  let results = [...groups.entries()].map(([group, stats]) => ({
+    group,
+    recordCount: stats.count,
+    value: plan.aggregation === "count" ? stats.count : plan.aggregation === "average" ? (stats.count - stats.missingMeasure ? stats.total / (stats.count - stats.missingMeasure) : 0) : stats.total,
+    missingMeasureRecords: stats.missingMeasure,
+  }));
   results = results.sort((a, b) => {
     if (plan.sort === "value_asc") return a.value - b.value;
     if (plan.sort === "count_desc") return b.recordCount - a.recordCount || b.value - a.value;
@@ -454,6 +463,14 @@ export async function executeQueryPlan(plan: QueryPlan, question?: string) {
     return b.value - a.value;
   });
   if (plan.limit) results = results.slice(0, plan.limit);
+
+  const grandTotal = results.reduce((sum, r) => sum + (plan.aggregation === "count" ? r.recordCount : r.value), 0);
+  const enrichedResults = results.map((r) => ({
+    ...r,
+    formattedValue: plan.aggregation === "count" ? `${r.value} records` : money.format(r.value),
+    shareOfTotal: grandTotal > 0 && results.length > 1 ? `${(( (plan.aggregation === "count" ? r.recordCount : r.value) / grandTotal) * 100).toFixed(1)}%` : undefined,
+  }));
+
   const measureTotals = plan.aggregation === "count" ? undefined : (plan.measures ?? []).map((field) => {
     let total = 0;
     let missing = 0;
@@ -464,6 +481,7 @@ export async function executeQueryPlan(plan: QueryPlan, question?: string) {
     }
     return { field, total, formattedTotal: money.format(total), missingMeasureRecords: missing };
   });
+
   const comparisonGroups = plan.groupBys?.map((field) => {
     const buckets = new Map<string, number>();
     let missing = 0;
@@ -475,5 +493,22 @@ export async function executeQueryPlan(plan: QueryPlan, question?: string) {
     }
     return { field, groups: [...buckets.entries()].map(([group, recordCount]) => ({ group, recordCount })).sort((a, b) => b.recordCount - a.recordCount), missingRecords: missing };
   });
-  return { plan, source: `live monday.com ${plan.board === "deals" ? "Deals" : "Work Orders"} board`, matchingRecords: filtered.length, results, comparisonGroups, measureTotals, currency: "INR", caveat: `${measureTotals?.reduce((sum, row) => sum + row.missingMeasureRecords, 0) ?? comparisonGroups?.reduce((sum, row) => sum + row.missingRecords, 0) ?? results.reduce((sum, row) => sum + row.missingMeasureRecords, 0)} matching record(s) have a missing value for the requested field(s).` };
+
+  const missingTotal = (measureTotals?.reduce((sum, row) => sum + row.missingMeasureRecords, 0)) ??
+    (comparisonGroups?.reduce((sum, row) => sum + row.missingRecords, 0)) ??
+    results.reduce((sum, row) => sum + row.missingMeasureRecords, 0);
+
+  const caveat = missingTotal > 0 ? `Note: ${missingTotal} matching record(s) had unpopulated values for the requested metric.` : null;
+
+  return {
+    plan,
+    source: `live monday.com ${plan.board === "deals" ? "Deals" : "Work Orders"} board`,
+    matchingRecords: filtered.length,
+    grandTotal: plan.aggregation === "count" ? grandTotal : money.format(grandTotal),
+    results: enrichedResults,
+    comparisonGroups,
+    measureTotals,
+    currency: "INR",
+    caveat,
+  };
 }
