@@ -1,9 +1,17 @@
 "use client";
 
-import { FormEvent, ReactNode, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 
-type Message = { role: "assistant" | "user"; content: string };
-const starters = ["How is our pipeline looking this quarter?", "Which sectors have the strongest deal value?", "Create a leadership update for this week."];
+type Message = { role: "assistant" | "user"; content: string; time?: string };
+
+const suggestionCategories = [
+  { label: "Pipeline this quarter", icon: "📊", query: "How is our pipeline looking this quarter?" },
+  { label: "Top sectors by deal value", icon: "🏢", query: "Which sectors have the highest potential deal value?" },
+  { label: "Weekly leadership brief", icon: "📑", query: "Create a leadership update for this week." },
+  { label: "Billed vs Collected revenue", icon: "💰", query: "What is the total billed value versus collected amount?" },
+  { label: "Work orders by owner", icon: "👷", query: "Which owners are handling the most work orders?" },
+  { label: "Receivables & Unbilled", icon: "⏳", query: "What is our total receivable amount and unbilled value?" },
+];
 
 function renderInline(text: string): ReactNode[] {
   const tokens = text.split(/(\*\*.*?\*\*|\*[^*]+\*|_[^_]+_)/g);
@@ -105,32 +113,201 @@ function FormattedMessage({ content }: { content: string }) {
 }
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([{ role: "assistant", content: "I’m Skylark’s BI agent. Ask about pipeline, sector performance, revenue, or work-order delivery. I’ll use live monday.com board data and provide executive leadership answers." }]);
+  const initialGreeting: Message = {
+    role: "assistant",
+    content: "Welcome to **Skylark Intelligence**. I'm connected live to your **Deals** and **Work Orders** boards on monday.com.\n\nAsk about sales pipeline, sector concentrations, revenue, work-order delivery, or request an on-demand leadership brief.",
+  };
+
+  const [messages, setMessages] = useState<Message[]>([initialGreeting]);
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, loading]);
 
   async function ask(text: string) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
     const nextMessages: Message[] = [...messages, { role: "user", content: trimmed }];
     setMessages(nextMessages);
-    setQuestion(""); setLoading(true);
-    try {
-      const response = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: trimmed, history: nextMessages.slice(-8) }) });
-      const data = (await response.json()) as { answer?: string; error?: string };
-      setMessages((current) => [...current, { role: "assistant", content: data.answer ?? data.error ?? "I couldn’t complete that analysis." }]);
-    } catch { setMessages((current) => [...current, { role: "assistant", content: "The service is unavailable. Please try again in a moment." }]); }
-    finally { setLoading(false); }
-  }
-  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); void ask(question); }
+    setQuestion("");
+    setLoading(true);
 
-  return <main className="shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">S</span><span>SKYLARK</span></div><div className="status"><span className="status-dot" /> monday.com connected</div></header>
-    <section className="hero"><p className="eyebrow">FOUNDER INTELLIGENCE</p><h1>Answers from your business,<br /><em>not just your boards.</em></h1><p className="intro">Live deals and work-order intelligence, translated into a clear leadership perspective.</p></section>
-    <section className="chat-card" aria-label="Business intelligence chat">
-      <div className="messages">{messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.role}-${index}`}><span className="avatar">{message.role === "assistant" ? "S" : "YOU"}</span><FormattedMessage content={message.content} /></article>)}{loading && <article className="message assistant"><span className="avatar">S</span><div className="content-body"><p className="thinking">Reviewing live board data…</p></div></article>}</div>
-      <div className="suggestions">{starters.map((starter) => <button key={starter} onClick={() => void ask(starter)}>{starter}</button>)}</div>
-      <form onSubmit={submit} className="composer"><label className="sr-only" htmlFor="question">Ask a business question</label><input id="question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about pipeline, delivery, revenue…" /><button type="submit" disabled={loading || !question.trim()} aria-label="Send question">↑</button></form>
-    </section><p className="footer-note">Read-only live monday.com intelligence</p>
-  </main>;
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: trimmed, history: nextMessages.slice(-8) }),
+      });
+      const data = (await response.json()) as { answer?: string; error?: string };
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", content: data.answer ?? data.error ?? "I couldn’t complete that analysis." },
+      ]);
+    } catch {
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", content: "The service is unavailable. Please check your connection and try again." },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void ask(question);
+  }
+
+  function resetChat() {
+    setMessages([initialGreeting]);
+    setQuestion("");
+  }
+
+  return (
+    <main className="shell">
+      {/* Top Navbar */}
+      <header className="topbar">
+        <div className="brand-wrapper">
+          <div className="brand-mark">S</div>
+          <div className="brand-title">
+            <span className="brand-name">SKYLARK</span>
+            <span className="brand-tag">INTELLIGENCE</span>
+          </div>
+        </div>
+
+        <div className="topbar-right">
+          <div className="board-pills">
+            <span className="pill">Deals</span>
+            <span className="pill">Work Orders</span>
+          </div>
+          <div className="status-badge" title="Connected to monday.com Streamable HTTP MCP">
+            <span className="status-dot pulsing" />
+            <span>Live Sync</span>
+          </div>
+          {messages.length > 1 && (
+            <button className="reset-btn" onClick={resetChat} title="Reset conversation">
+              <span>↺</span> Clear
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <section className="hero">
+        <div className="hero-pill">
+          <span className="sparkle">✨</span>
+          <span>EXECUTIVE BUSINESS INTELLIGENCE</span>
+        </div>
+        <h1>
+          Answers from your business,
+          <br />
+          <em>not just your boards.</em>
+        </h1>
+        <p className="intro">
+          Live deals and work-order intelligence, synthesized into executive clarity for founders and leadership.
+        </p>
+      </section>
+
+      {/* Suggestion Chips */}
+      <section className="quick-starters" aria-label="Suggested business questions">
+        <div className="starters-scroll">
+          {suggestionCategories.map((item) => (
+            <button
+              key={item.label}
+              className="starter-chip"
+              onClick={() => void ask(item.query)}
+              disabled={loading}
+            >
+              <span className="chip-icon">{item.icon}</span>
+              <span className="chip-label">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Chat Dashboard Card */}
+      <section className="chat-card" aria-label="Business intelligence conversation">
+        <div className="messages-container">
+          {messages.map((message, index) => (
+            <article className={`message-row ${message.role}`} key={`${message.role}-${index}`}>
+              <div className="avatar-wrapper">
+                <div className={`avatar ${message.role}`}>
+                  {message.role === "assistant" ? "S" : "YOU"}
+                </div>
+              </div>
+              <div className="message-bubble">
+                {message.role === "assistant" && (
+                  <div className="bubble-header">
+                    <span className="agent-badge">Skylark Executive AI</span>
+                  </div>
+                )}
+                <FormattedMessage content={message.content} />
+              </div>
+            </article>
+          ))}
+
+          {loading && (
+            <article className="message-row assistant">
+              <div className="avatar-wrapper">
+                <div className="avatar assistant">S</div>
+              </div>
+              <div className="message-bubble thinking-bubble">
+                <div className="thinking-indicator">
+                  <span className="dot" />
+                  <span className="dot" />
+                  <span className="dot" />
+                </div>
+                <span className="thinking-text">Querying live monday.com boards…</span>
+              </div>
+            </article>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Composer */}
+        <form onSubmit={submit} className="composer-bar">
+          <div className="input-container">
+            <span className="search-icon">🔍</span>
+            <input
+              id="question"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder="Ask about pipeline, sector revenue, delivery status, unbilled amounts..."
+              disabled={loading}
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              disabled={loading || !question.trim()}
+              aria-label="Send question"
+              className="send-btn"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5" />
+                <polyline points="5 12 12 5 19 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="composer-hint">
+            <span>Press <strong>Enter ↵</strong> to query live data</span>
+            <span>•</span>
+            <span>Deterministic financial metrics</span>
+          </div>
+        </form>
+      </section>
+
+      {/* Footer Note */}
+      <footer className="page-footer">
+        <p>Skylark Drones Intelligence · Powered by official monday.com MCP & Google Gemini</p>
+      </footer>
+    </main>
+  );
 }
