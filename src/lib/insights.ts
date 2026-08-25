@@ -192,6 +192,132 @@ function valueFor(item: Record<string, unknown>, board: keyof typeof columns, co
   return columnText(item, columnId);
 }
 
+export function resolveColumn(board: "deals" | "work_orders", column?: unknown, desiredType?: "number" | "category"): string | undefined {
+  if (typeof column !== "string" || !column.trim()) return undefined;
+  const raw = column.toLowerCase().trim().replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+  
+  const map = columns[board] as Record<string, string>;
+  const supported = new Set([...Object.keys(map ?? {}), ...(board === "work_orders" ? Object.keys(sourceColumns.work_orders) : [])]);
+  if (supported.has(raw)) return raw;
+
+  const singular = raw.replace(/s$/, "");
+  if (supported.has(singular)) return singular;
+
+  const aliasMap: Record<string, string> = {
+    sector: "sector",
+    sectors: "sector",
+    industry: "sector",
+    industries: "sector",
+    deal: "deal_name",
+    deals: "deal_name",
+    deal_name: "deal_name",
+    name: "deal_name",
+    names: "deal_name",
+    project: "deal_name",
+    projects: "deal_name",
+    project_name: "deal_name",
+    owner: "owner_code",
+    owners: "owner_code",
+    owner_code: "owner_code",
+    deal_owner: "owner_code",
+    deal_owners: "owner_code",
+    sales_owner: "owner_code",
+    sales_rep: "owner_code",
+    rep: "owner_code",
+    reps: "owner_code",
+    client: board === "deals" ? "client_code" : "customer_code",
+    clients: board === "deals" ? "client_code" : "customer_code",
+    client_code: "client_code",
+    customer: board === "deals" ? "client_code" : "customer_code",
+    customers: board === "deals" ? "client_code" : "customer_code",
+    customer_code: "customer_code",
+    status: board === "deals" ? "deal_status" : "execution_status",
+    statuses: board === "deals" ? "deal_status" : "execution_status",
+    deal_status: "deal_status",
+    stage: "deal_stage",
+    stages: "deal_stage",
+    deal_stage: "deal_stage",
+    deal_stages: "deal_stage",
+    pipeline_stage: "deal_stage",
+    product: board === "deals" ? "product_deal" : "type_of_work",
+    products: board === "deals" ? "product_deal" : "type_of_work",
+    product_type: board === "deals" ? "product_deal" : "type_of_work",
+    product_deal: "product_deal",
+    type_of_work: "type_of_work",
+    probability: "closure_probability",
+    probabilities: "closure_probability",
+    closure_probability: "closure_probability",
+    close_date: "tentative_close_date",
+    tentative_close_date: "tentative_close_date",
+    actual_close_date: "actual_close_date",
+    created_date: "created_date",
+
+    deal_value: "deal_value",
+    potential_deal_value: "deal_value",
+    potential_value: "deal_value",
+    expected_deal_value: "deal_value",
+    expected_value: "deal_value",
+    projected_deal_value: "deal_value",
+    projected_value: "deal_value",
+    pipeline_value: "deal_value",
+    sales_value: "deal_value",
+    total_deal_value: "deal_value",
+    deal_values: "deal_value",
+    value: board === "deals" ? "deal_value" : "contract_value_excl_gst",
+    revenue: board === "deals" ? "deal_value" : "contract_value_excl_gst",
+    amount: board === "deals" ? "deal_value" : "contract_value_excl_gst",
+    worth: "deal_value",
+    pipeline: "deal_value",
+
+    contract_value: "contract_value_excl_gst",
+    contract_value_excl_gst: "contract_value_excl_gst",
+    work_order_value: "contract_value_excl_gst",
+    order_value: "contract_value_excl_gst",
+    wo_value: "contract_value_excl_gst",
+    billed_value: "billed_value_excl_gst",
+    billed_value_excl_gst: "billed_value_excl_gst",
+    billed_amount: "billed_value_excl_gst",
+    billing_value: "billed_value_excl_gst",
+    collected_amount: "collected_amount_incl_gst",
+    collected_amount_incl_gst: "collected_amount_incl_gst",
+    collected_value: "collected_amount_incl_gst",
+    collection_value: "collected_amount_incl_gst",
+    amount_to_bill: "amount_to_bill_excl_gst",
+    amount_to_bill_excl_gst: "amount_to_bill_excl_gst",
+    unbilled: "amount_to_bill_excl_gst",
+    to_bill: "amount_to_bill_excl_gst",
+    amount_receivable: "amount_receivable",
+    receivable: "amount_receivable",
+    receivables: "amount_receivable",
+    execution_status: "execution_status",
+    delivery_status: "execution_status",
+    invoice_status: "invoice_status",
+    billing_status: "billing_status",
+    collection_status: "collection_status",
+    document_type: "document_type",
+    nature_of_work: "nature_of_work",
+  };
+
+  if (aliasMap[raw]) return aliasMap[raw];
+  if (aliasMap[singular]) return aliasMap[singular];
+
+  if (board === "deals" && (desiredType === "number" || raw.includes("value") || raw.includes("amount") || raw.includes("revenue") || raw.includes("worth") || raw.includes("deal") || raw.includes("pipeline") || raw.includes("potential"))) {
+    return "deal_value";
+  }
+
+  const hints = columnHints[board];
+  for (const [colName, hint] of Object.entries(hints)) {
+    if (hint.phrases.some(p => {
+      const phr = p.replace(/\s+/g, "_");
+      return raw.includes(phr) || phr.includes(raw);
+    })) {
+      return colName;
+    }
+  }
+
+  return undefined;
+}
+
 function inferColumn(question: string, board: keyof typeof columns, desired: "number" | "group"): string | undefined {
   const lower = question.toLowerCase();
   const candidates = Object.entries(columnHints[board]).filter(([, hint]) => desired === "number" ? hint.type === "number" : hint.type !== "number");
@@ -241,23 +367,44 @@ function completePlanFromQuestion(plan: QueryPlan, question?: string): QueryPlan
 
 export async function executeQueryPlan(plan: QueryPlan, question?: string) {
   plan = completePlanFromQuestion(plan, question);
-  const aliases: Record<string, string> = { deals: "deals", deal: "deals", work_orders: "work_orders", "work orders": "work_orders", workorders: "work_orders", product_type: "product_deal", product: "product_deal", stage: "deal_stage", owner: "owner_code", deal_owner: "owner_code", value: "deal_value", pipeline_value: "deal_value", revenue: "deal_value", work_order_value: "contract_value_excl_gst", order_value: "contract_value_excl_gst", contract_value: "contract_value_excl_gst" };
-  const normalizedBoard = (aliases[String(plan.board).toLowerCase()] as QueryPlan["board"] | undefined) ?? (plan.board === "work_orders" ? "work_orders" : "deals");
-  const normalizeColumn = (column?: unknown) => {
-    if (typeof column !== "string") return undefined;
-    const key = column.toLowerCase().replace(/\s+/g, "_");
-    return aliases[key] ?? key;
-  };
+  const board: "deals" | "work_orders" = String(plan.board).toLowerCase().includes("work") ? "work_orders" : "deals";
   const rawAggregation = plan.aggregation as unknown;
   const aggregationObject = rawAggregation && typeof rawAggregation === "object" ? rawAggregation as { operation?: unknown; type?: unknown; column?: unknown } : undefined;
-  const measures = Array.isArray(plan.measures) ? plan.measures.map((measure) => normalizeColumn(measure)).filter((measure): measure is string => Boolean(measure)) : [];
-  const groupBys = Array.isArray(plan.groupBys) ? plan.groupBys.map((groupBy) => normalizeColumn(groupBy)).filter((groupBy): groupBy is string => Boolean(groupBy)) : [];
-  let measure = normalizeColumn(plan.measure ?? aggregationObject?.column) ?? measures[0];
+  
+  const measures = Array.isArray(plan.measures)
+    ? plan.measures.map((m) => resolveColumn(board, m, "number")).filter((m): m is string => Boolean(m))
+    : [];
+  const groupBys = Array.isArray(plan.groupBys)
+    ? plan.groupBys.map((g) => resolveColumn(board, g, "category")).filter((g): g is string => Boolean(g))
+    : [];
+  let measure = resolveColumn(board, plan.measure ?? aggregationObject?.column, "number") ?? measures[0];
+  const groupBy = resolveColumn(board, plan.groupBy, "category");
   const aggregation = (typeof rawAggregation === "string" ? rawAggregation.toLowerCase() : typeof aggregationObject?.operation === "string" ? aggregationObject.operation.toLowerCase() : typeof aggregationObject?.type === "string" ? aggregationObject.type.toLowerCase() : "sum") as QueryPlan["aggregation"];
+
   if (aggregation !== "count" && !measure) {
-    measure = normalizedBoard === "deals" ? "deal_value" : "contract_value_excl_gst";
+    measure = board === "deals" ? "deal_value" : "contract_value_excl_gst";
   }
-  plan = { ...plan, board: normalizedBoard, aggregation: ["count", "sum", "average"].includes(aggregation) ? aggregation : "sum", measure, measures: measures.length ? measures : measure ? [measure] : undefined, groupBy: normalizeColumn(plan.groupBy), groupBys: groupBys.length ? groupBys : undefined, filters: Array.isArray(plan.filters) ? plan.filters.filter((filter) => filter && typeof filter === "object").map((filter) => ({ ...filter, column: normalizeColumn(filter.column) ?? filter.column })) : [], sort: plan.sort ?? (plan.groupBy ? aggregation === "count" ? "count_desc" : "value_desc" : undefined), limit: typeof plan.limit === "number" && plan.limit > 0 ? Math.min(Math.floor(plan.limit), 25) : undefined };
+
+  const normalizedFilters = Array.isArray(plan.filters)
+    ? plan.filters.filter((f) => f && typeof f === "object" && f.column).map((f) => ({
+        ...f,
+        column: resolveColumn(board, f.column) ?? f.column,
+      }))
+    : [];
+
+  plan = {
+    ...plan,
+    board,
+    aggregation: ["count", "sum", "average"].includes(aggregation) ? aggregation : "sum",
+    measure,
+    measures: measures.length ? measures : measure ? [measure] : undefined,
+    groupBy,
+    groupBys: groupBys.length ? groupBys : undefined,
+    filters: normalizedFilters,
+    sort: plan.sort ?? (groupBy ? aggregation === "count" ? "count_desc" : "value_desc" : undefined),
+    limit: typeof plan.limit === "number" && plan.limit > 0 ? Math.min(Math.floor(plan.limit), 25) : undefined,
+  };
+
   const map = columns[plan.board];
   const supportedColumns = new Set([...Object.keys(map ?? {}), ...(plan.board === "work_orders" ? Object.keys(sourceColumns.work_orders) : [])]);
   if (!map || (plan.measure && !supportedColumns.has(plan.measure))) throw new Error("The requested query uses an unsupported board or column.");
