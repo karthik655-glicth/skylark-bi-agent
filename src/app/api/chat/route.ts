@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { executeQueryPlan } from "@/lib/insights";
-import { conversationalReply, createQueryPlan, queryReply } from "@/lib/gemini";
+import { executeQueryPlan, getBusinessFacts, fallbackBusinessAnswer } from "@/lib/insights";
+import { conversationalReply, createQueryPlan, queryReply, businessReply } from "@/lib/gemini";
 
 export const runtime = "nodejs";
 
@@ -50,6 +50,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ answer: isGreeting ? "Hello! Ask me about pipeline, sectors, revenue, delivery, or a leadership update." : "I can analyse Skylark's live Deals and Work Orders data. Ask about pipeline, sectors, revenue, delivery, billing, or a leadership update." });
   }
 
+  const isOverviewQuestion = /how is (our |the )?pipeline|pipeline looking|leadership update|executive update|leadership briefing|business update|overview of (our |the )?pipeline|weekly update/i.test(contextQuestion);
+
+  if (isOverviewQuestion) {
+    try {
+      const facts = await getBusinessFacts(contextQuestion);
+      const answer = await businessReply(question, facts);
+      const fallback = fallbackBusinessAnswer(facts);
+      return NextResponse.json({ answer: cleanDisplayText(answer ?? fallback) });
+    } catch (error) {
+      console.error("Business facts request failed", error);
+      return NextResponse.json({ answer: `I couldn’t retrieve the data from monday.com. ${describeError(error)}` }, { status: 502 });
+    }
+  }
+
   try {
     const plan = await createQueryPlan(contextQuestion);
     if (!plan) throw new Error("I could not translate that question into a safe data query. Please name the measure or grouping you need.");
@@ -60,6 +74,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ answer: cleanDisplayText(answer ?? fallback) });
   } catch (error) {
     console.error("monday MCP request failed", error);
-    return NextResponse.json({ answer: `I couldn’t reach the monday.com data service. ${describeError(error)}` }, { status: 502 });
+    return NextResponse.json({ answer: `I couldn’t complete the analysis on monday.com. ${describeError(error)}` }, { status: 502 });
   }
 }

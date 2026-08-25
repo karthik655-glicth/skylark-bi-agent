@@ -50,7 +50,7 @@ const columnHints: Record<keyof typeof columns, Record<string, { type: "number" 
     deal_status: { type: "category", phrases: ["deal status", "status", "open", "won", "lost"] },
     actual_close_date: { type: "date", phrases: ["actual close date", "closed date"] },
     closure_probability: { type: "category", phrases: ["closure probability", "probability"] },
-    deal_value: { type: "number", phrases: ["deal value", "pipeline value", "sales value", "revenue", "value"] },
+    deal_value: { type: "number", phrases: ["pipeline value", "deal value", "deals value", "deal size", "sales value", "pipeline", "revenue", "sales", "value", "worth", "amount", "total value"] },
     tentative_close_date: { type: "date", phrases: ["tentative close date", "expected close", "close date"] },
     deal_stage: { type: "category", phrases: ["deal stage", "stage", "pipeline stage"] },
     product_deal: { type: "category", phrases: ["product", "product type", "product deal"] },
@@ -226,7 +226,10 @@ function completePlanFromQuestion(plan: QueryPlan, question?: string): QueryPlan
     if (measures.length > 1) completed.measures = measures;
   }
   if (completed.measures?.length && !completed.measure) completed.measure = completed.measures[0];
-  if (completed.aggregation !== "count" && !completed.measure) completed.measure = inferColumn(lower, board, "number");
+  if (completed.aggregation !== "count" && !completed.measure) {
+    completed.measure = inferColumn(lower, board, "number") ?? (board === "deals" ? "deal_value" : "contract_value_excl_gst");
+  }
+  if (!completed.measures?.length && completed.measure) completed.measures = [completed.measure];
   if (!completed.measure && asksForCount) completed.aggregation = "count";
   if (completed.measure) completed.aggregation = asksForAverage ? "average" : completed.aggregation === "count" && !asksForCount ? "sum" : completed.aggregation;
   if (completed.board === "deals" && /pipeline|open deal|active deal|current deal/.test(lower) && !/lost|won|completed|closed/.test(lower)) {
@@ -239,7 +242,7 @@ function completePlanFromQuestion(plan: QueryPlan, question?: string): QueryPlan
 export async function executeQueryPlan(plan: QueryPlan, question?: string) {
   plan = completePlanFromQuestion(plan, question);
   const aliases: Record<string, string> = { deals: "deals", deal: "deals", work_orders: "work_orders", "work orders": "work_orders", workorders: "work_orders", product_type: "product_deal", product: "product_deal", stage: "deal_stage", owner: "owner_code", deal_owner: "owner_code", value: "deal_value", pipeline_value: "deal_value", revenue: "deal_value", work_order_value: "contract_value_excl_gst", order_value: "contract_value_excl_gst", contract_value: "contract_value_excl_gst" };
-  const normalizedBoard = aliases[String(plan.board).toLowerCase()] as QueryPlan["board"] | undefined;
+  const normalizedBoard = (aliases[String(plan.board).toLowerCase()] as QueryPlan["board"] | undefined) ?? (plan.board === "work_orders" ? "work_orders" : "deals");
   const normalizeColumn = (column?: unknown) => {
     if (typeof column !== "string") return undefined;
     const key = column.toLowerCase().replace(/\s+/g, "_");
@@ -249,16 +252,25 @@ export async function executeQueryPlan(plan: QueryPlan, question?: string) {
   const aggregationObject = rawAggregation && typeof rawAggregation === "object" ? rawAggregation as { operation?: unknown; type?: unknown; column?: unknown } : undefined;
   const measures = Array.isArray(plan.measures) ? plan.measures.map((measure) => normalizeColumn(measure)).filter((measure): measure is string => Boolean(measure)) : [];
   const groupBys = Array.isArray(plan.groupBys) ? plan.groupBys.map((groupBy) => normalizeColumn(groupBy)).filter((groupBy): groupBy is string => Boolean(groupBy)) : [];
-  const measure = normalizeColumn(plan.measure ?? aggregationObject?.column) ?? measures[0];
-  plan = { ...plan, board: normalizedBoard ?? plan.board, aggregation: (typeof rawAggregation === "string" ? rawAggregation.toLowerCase() : typeof aggregationObject?.operation === "string" ? aggregationObject.operation.toLowerCase() : typeof aggregationObject?.type === "string" ? aggregationObject.type.toLowerCase() : "count") as QueryPlan["aggregation"], measure, measures: measures.length ? measures : measure ? [measure] : undefined, groupBy: normalizeColumn(plan.groupBy), groupBys: groupBys.length ? groupBys : undefined, filters: Array.isArray(plan.filters) ? plan.filters.filter((filter) => filter && typeof filter === "object").map((filter) => ({ ...filter, column: normalizeColumn(filter.column) ?? filter.column })) : [], sort: plan.sort ?? (plan.groupBy ? plan.aggregation === "count" ? "count_desc" : "value_desc" : undefined), limit: typeof plan.limit === "number" && plan.limit > 0 ? Math.min(Math.floor(plan.limit), 25) : undefined };
+  let measure = normalizeColumn(plan.measure ?? aggregationObject?.column) ?? measures[0];
+  const aggregation = (typeof rawAggregation === "string" ? rawAggregation.toLowerCase() : typeof aggregationObject?.operation === "string" ? aggregationObject.operation.toLowerCase() : typeof aggregationObject?.type === "string" ? aggregationObject.type.toLowerCase() : "sum") as QueryPlan["aggregation"];
+  if (aggregation !== "count" && !measure) {
+    measure = normalizedBoard === "deals" ? "deal_value" : "contract_value_excl_gst";
+  }
+  plan = { ...plan, board: normalizedBoard, aggregation: ["count", "sum", "average"].includes(aggregation) ? aggregation : "sum", measure, measures: measures.length ? measures : measure ? [measure] : undefined, groupBy: normalizeColumn(plan.groupBy), groupBys: groupBys.length ? groupBys : undefined, filters: Array.isArray(plan.filters) ? plan.filters.filter((filter) => filter && typeof filter === "object").map((filter) => ({ ...filter, column: normalizeColumn(filter.column) ?? filter.column })) : [], sort: plan.sort ?? (plan.groupBy ? aggregation === "count" ? "count_desc" : "value_desc" : undefined), limit: typeof plan.limit === "number" && plan.limit > 0 ? Math.min(Math.floor(plan.limit), 25) : undefined };
   const map = columns[plan.board];
   const supportedColumns = new Set([...Object.keys(map ?? {}), ...(plan.board === "work_orders" ? Object.keys(sourceColumns.work_orders) : [])]);
-  if (!map || !["count", "sum", "average"].includes(plan.aggregation) || (plan.aggregation !== "count" && !plan.measure) || (plan.measure && !supportedColumns.has(plan.measure)) || (plan.measures?.some((field) => !supportedColumns.has(field))) || (plan.groupBy && !supportedColumns.has(plan.groupBy)) || (plan.groupBys?.some((field) => !supportedColumns.has(field)))) throw new Error("The requested query uses an unsupported board, column, or operation.");
+  if (!map || (plan.measure && !supportedColumns.has(plan.measure))) throw new Error("The requested query uses an unsupported board or column.");
   const records = await getBoardItems(plan.board === "deals" ? DEALS : WORK_ORDERS);
   const filtered = records.filter((item) => (plan.filters ?? []).every((filter) => {
-    if (!supportedColumns.has(filter.column)) return false;
-    const actual = (valueFor(item, plan.board, filter.column) ?? "").toLowerCase();
+    if (!supportedColumns.has(filter.column)) return true;
+    const rawVal = valueFor(item, plan.board, filter.column);
+    if (!rawVal) return false;
+    const actual = rawVal.toLowerCase();
     const expected = filter.value.toLowerCase();
+    if (filter.column.includes("date") && /quarter|this quarter|current quarter|q[1-4]/i.test(expected)) {
+      return inCurrentQuarter(rawVal);
+    }
     return filter.operator === "equals" ? actual === expected : actual.includes(expected);
   }));
   const groups = new Map<string, { count: number; total: number; missingMeasure: number }>();
